@@ -1,0 +1,50 @@
+name: Guard StreamNest video duration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/guard-video-duration.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require video metadata before publish
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+          changes=[
+            ("const publishBtn=document.createElement('button'); publishBtn.className='btn btn-primary'; publishBtn.textContent='Publish to my profile'; form.appendChild(publishBtn);",
+             "const publishBtn=document.createElement('button'); publishBtn.className='btn btn-primary'; publishBtn.textContent='Publish to my profile'; publishBtn.disabled=true; form.appendChild(publishBtn);"),
+            ("fileObj=f; durationSeconds=0;",
+             "fileObj=f; durationSeconds=0; publishBtn.disabled=true;"),
+            ("durationSeconds=Number.isFinite(v.duration)?Math.max(0,Math.round(v.duration)):0;\n        fileMeta.textContent=`${secondsToClock(durationSeconds)} • ${mb} MB • ${f.type || 'video'}`;",
+             "durationSeconds=Number.isFinite(v.duration)?Math.max(0,Math.round(v.duration)):0;\n        fileMeta.textContent=`${secondsToClock(durationSeconds)} • ${mb} MB • ${f.type || 'video'}`;\n        if(durationSeconds>0){ publishBtn.disabled=false; uploadStatus.textContent='Video ready to publish.'; }\n        else { publishBtn.disabled=true; uploadStatus.textContent='Could not read this video duration. Try a standard MP4/WebM export.'; }")
+          ]
+          for old,new in changes:
+              if s.count(old)!=1: raise SystemExit(f'Expected one match, found {s.count(old)} for {old[:55]}')
+              s=s.replace(old,new,1)
+          p.write_text(s)
+
+          h=Path('index.html')
+          x=h.read_text()
+          old='app.js?v=20260903-cloudvideo1'
+          new='app.js?v=20260903-cloudvideo2'
+          if x.count(old)!=1: raise SystemExit(f'Cache marker count: {x.count(old)}')
+          h.write_text(x.replace(old,new,1))
+          PY
+          node --check app.js
+      - name: Commit duration guard
+        run: |
+          rm .github/workflows/guard-video-duration.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Require video duration before publishing'
+          git push
