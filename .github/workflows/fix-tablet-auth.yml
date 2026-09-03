@@ -1,0 +1,49 @@
+name: Fix tablet sign-in
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-tablet-auth.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch tablet-friendly auth controls
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app.js')
+          s = p.read_text()
+          old = """          <input class='input' id='auth-email' type='email' placeholder='Email' autocomplete='email' required>\n          <input class='input' id='auth-password' type='password' placeholder='Password (8+ characters)' minlength='8' autocomplete='${mode==='signup'?'new-password':'current-password'}' required>\n          <button class='btn btn-primary' type='submit'>${mode==='signup'?'Create StreamNest account':'Sign in'}</button>"""
+          new = """          <input class='input' id='auth-email' type='text' inputmode='text' name='streamnest-email' placeholder='Email address' autocomplete='off' autocapitalize='none' autocorrect='off' spellcheck='false' enterkeyhint='next' required>\n          <input class='input' id='auth-password' type='password' placeholder='Password (8+ characters)' minlength='8' autocomplete='off' autocapitalize='none' autocorrect='off' spellcheck='false' enterkeyhint='done' required>\n          <label class='small auth-show-password'><input id='auth-show-password' type='checkbox'> Show password</label>\n          <button class='btn btn-primary' type='submit'>${mode==='signup'?'Create StreamNest account':'Sign in'}</button>"""
+          if s.count(old) != 1:
+              raise SystemExit(f'Expected auth field block once, found {s.count(old)}')
+          s = s.replace(old, new, 1)
+          old2 = """      host.querySelector('#tab-signin').addEventListener('click',()=>{mode='signin';paint();});\n      host.querySelector('#auth-form').addEventListener('submit', async (e)=>{"""
+          new2 = """      host.querySelector('#tab-signin').addEventListener('click',()=>{mode='signin';paint();});\n      const passwordInput=host.querySelector('#auth-password');\n      const showPassword=host.querySelector('#auth-show-password');\n      showPassword.addEventListener('change',()=>{\n        passwordInput.type=showPassword.checked?'text':'password';\n      });\n      host.querySelector('#auth-form').addEventListener('submit', async (e)=>{"""
+          if s.count(old2) != 1:
+              raise SystemExit(f'Expected auth listener block once, found {s.count(old2)}')
+          s = s.replace(old2, new2, 1)
+          old3 = """        const email=host.querySelector('#auth-email').value.trim();\n        const password=host.querySelector('#auth-password').value;\n        message.textContent = mode==='signup' ? 'Creating account…' : 'Signing in…';"""
+          new3 = """        const email=host.querySelector('#auth-email').value.trim().toLowerCase();\n        const password=host.querySelector('#auth-password').value;\n        if(!email || !email.includes('@')){\n          message.textContent='Enter your email address.';\n          host.querySelector('#auth-email').focus();\n          return;\n        }\n        message.textContent = mode==='signup' ? 'Creating account…' : 'Signing in…';"""
+          if s.count(old3) != 1:
+              raise SystemExit(f'Expected auth submit block once, found {s.count(old3)}')
+          s = s.replace(old3, new3, 1)
+          p.write_text(s)
+          PY
+          node --check app.js
+      - name: Commit fix
+        shell: bash
+        run: |
+          rm .github/workflows/fix-tablet-auth.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Make sign-in tablet friendly'
+          git push
