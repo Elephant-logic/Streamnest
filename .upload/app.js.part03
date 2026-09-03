@@ -1,0 +1,150 @@
+        <div class='small' id='song-generate-message'></div>
+      </div>`);
+    const btn=document.getElementById('generate-song-now');
+    const msg=document.getElementById('song-generate-message');
+    btn.addEventListener('click',async()=>{
+      btn.disabled=true; btn.textContent='Generating…'; msg.textContent='Creating the song and sending it to the music generator…';
+      try{
+        await createAndGenerateSong(creator,agent,{idea:document.getElementById('song-idea').value.trim(),duration:Number(document.getElementById('song-duration').value)});
+        hidePanel();
+      }catch(err){
+        msg.textContent=err.message || 'Song generation failed.';
+        btn.disabled=false; btn.textContent='Try again';
+      }
+    });
+  }
+
+  async function publishSong(song){
+    if(!cloud.user || !song.audio_path || song.status!=='ready') return;
+    const {error}=await cloud.client.from('songs').update({
+      status:'published',is_public:true,published_at:new Date().toISOString(),updated_at:new Date().toISOString()
+    }).eq('id',song.id).eq('owner_user_id',cloud.user.id);
+    if(error) throw error;
+    await refreshCloudState();
+    showToast(`“${song.title}” published`);
+    if(document.body.getAttribute('data-route')==='ai-artists') renderRoute('ai-artists');
+  }
+
+  async function retrySongGeneration(song){
+    if(!cloud.user) throw new Error('Sign in first.');
+    const latest=cloud.jobs.find(j=>j.song_id===song.id);
+    let job=latest;
+    if(!job || job.status==='failed' || job.status==='cancelled' || job.status==='succeeded'){
+      const creator=cloud.creators.find(c=>c.id===song.creator_id);
+      const agent=cloud.agents[song.creator_id];
+      const draft=makeAiSongDraft(creator||{name:'AI artist'},agent,song.description);
+      const {data,error}=await cloud.client.from('generation_jobs').insert({
+        owner_user_id:cloud.user.id,creator_id:song.creator_id,song_id:song.id,provider:'elevenlabs',
+        concept:(latest&&latest.concept)||song.description||draft.concept,
+        prompt:(latest&&latest.prompt)||draft.prompt,
+        requested_duration_seconds:(latest&&latest.requested_duration_seconds)||song.duration_seconds||30,
+        status:'queued'
+      }).select('*').single();
+      if(error) throw error;
+      job=data;
+      await cloud.client.from('songs').update({status:'draft',updated_at:new Date().toISOString()}).eq('id',song.id).eq('owner_user_id',cloud.user.id);
+    }
+    const result=await invokeSongGeneration(job.id);
+    await refreshCloudState();
+    showToast(`“${song.title}” is ready to preview`);
+    if(document.body.getAttribute('data-route')==='ai-artists') renderRoute('ai-artists');
+    return result;
+  }
+
+  async function resolveSongAudio(song, audioEl){
+    if(!song.audio_path || !cloud.client || !audioEl) return;
+    try{
+      let signed=cloud.audioUrls[song.audio_path];
+      if(!signed){
+        const {data,error}=await cloud.client.storage.from('song-audio').createSignedUrl(song.audio_path,3600);
+        if(error) throw error;
+        signed=data && data.signedUrl;
+        if(signed) cloud.audioUrls[song.audio_path]=signed;
+      }
+      if(signed) audioEl.src=signed;
+    }catch(err){
+      const holder=audioEl.closest('.song-audio-wrap');
+      if(holder) holder.insertAdjacentHTML('beforeend',`<div class='small provider-note'>Could not load preview: ${escapeHtml(err.message||String(err))}</div>`);
+    }
+  }
+
+  async function deleteAiArtist(creator){
+    if(!cloud.user || !confirm(`Delete ${creator.name} and its drafts?`)) return;
+    const {error}=await cloud.client.from('creators').delete().eq('id',creator.id).eq('owner_user_id',cloud.user.id);
+    if(error){showToast(error.message);return;}
+    await refreshCloudState();
+    showToast('AI artist deleted');
+    renderRoute('ai-artists');
+  }
+
+  function renderAiArtists(){
+    const c=document.createElement('div'); c.className='screen-page';
+    c.innerHTML=`<div class='ai-toolbar'><div><h2 style='margin-bottom:4px'>AI Artists</h2><div class='small'>Create a character, generate original music from its identity, preview it privately, then publish.</div></div><button class='btn btn-primary' id='new-ai-artist'>＋ Create AI Artist</button></div>${cloudStatusHtml()}<div id='ai-artist-content'></div>`;
+    view.appendChild(c);
+    c.querySelector('#new-ai-artist').addEventListener('click',openCreateAiArtistPanel);
+    const host=c.querySelector('#ai-artist-content');
+    if(!cloud.user){
+      host.innerHTML=`<div class='empty-state'><h3>Sign in to create an AI artist</h3><p>Your artist's personality, music and generation settings will persist in the cloud.</p><button class='btn btn-primary' id='ai-signin'>Create account / Sign in</button></div>`;
+      host.querySelector('#ai-signin').addEventListener('click',()=>setRoute('auth'));
+      return;
+    }
+    host.innerHTML='<div class="small">Loading your artists…</div>';
+    refreshCloudState().then(()=>{
+      if(document.body.getAttribute('data-route')!=='ai-artists') return;
+      const artists=cloud.creators.filter(x=>x.creator_type==='ai');
+      host.innerHTML='';
+      if(!artists.length){
+        host.innerHTML=`<div class='empty-state'><h3>No AI artists yet</h3><p>Create a character, then generate its first song.</p></div>`;
+      }else{
+        const grid=document.createElement('div'); grid.className='ai-grid';
+        artists.forEach(creator=>{
+          const agent=cloud.agents[creator.id];
+          const count=cloud.songs.filter(s=>s.creator_id===creator.id).length;
+          const published=cloud.songs.filter(s=>s.creator_id===creator.id&&s.status==='published').length;
+          const el=document.createElement('article'); el.className='card ai-card';
+          el.innerHTML=`<div class='ai-meta'><div class='ai-avatar' style='background:${escapeHtml(creator.avatar_color || '#00E1D6')}'>${escapeHtml(creator.name.split(' ').map(x=>x[0]).join('').slice(0,2))}</div><div><span class='ai-badge'>✨ AI ARTIST</span><h3 style='margin:6px 0 2px'>${escapeHtml(creator.name)}</h3><div class='small'>${escapeHtml(creator.handle)} • ${count} song${count===1?'':'s'} • ${published} published</div></div></div>
+            <p class='small' style='margin-top:10px'>${escapeHtml(creator.bio || '')}</p>
+            <div class='ai-genres'>${((agent&&agent.genres)||[]).map(g=>`<span class='chip'>${escapeHtml(g)}</span>`).join('')}</div>
+            <div class='small' style='margin-top:9px'><strong>Personality:</strong> ${escapeHtml((agent&&agent.personality)||'Not set')}</div>
+            <div class='small' style='margin-top:5px'><strong>Autonomy:</strong> ${escapeHtml((agent&&agent.autonomy_level)||'manual')} • Monthly generation limit: ${Number((agent&&agent.monthly_generation_limit)||0)}</div>
+            <div class='ai-card-actions'><button class='btn btn-primary create-song'>♫ Create song</button><button class='btn delete-ai'>Delete</button></div>`;
+          el.querySelector('.create-song').addEventListener('click',()=>openCreateSongPanel(creator,agent));
+          el.querySelector('.delete-ai').addEventListener('click',()=>deleteAiArtist(creator));
+          grid.appendChild(el);
+        });
+        host.appendChild(grid);
+      }
+
+      const section=document.createElement('section'); section.className='song-library';
+      section.innerHTML=`<div class='song-section-heading'><div><h3>Your AI songs</h3><div class='small'>Generated audio stays private until you press Publish.</div></div></div>`;
+      const list=document.createElement('div'); list.className='song-list';
+      if(!cloud.songs.length) list.innerHTML=`<div class='empty-state'>No songs yet. Choose an AI artist and press Create song.</div>`;
+      cloud.songs.forEach(song=>{
+        const creator=cloud.creators.find(x=>x.id===song.creator_id);
+        const latestJob=cloud.jobs.find(j=>j.song_id===song.id);
+        const row=document.createElement('article'); row.className='card song-row';
+        const status=String(song.status||'draft');
+        const statusLabel=status==='ready'?'READY TO PUBLISH':status.toUpperCase();
+        const errorNote=latestJob&&latestJob.error_message?`<div class='small song-error'>${escapeHtml(latestJob.error_message)}</div>`:'';
+        row.innerHTML=`<div class='song-main'><div class='song-title-line'><div><div class='song-title'>${escapeHtml(song.title)}</div><div class='small'>${escapeHtml(creator?creator.name:'AI artist')} • ${song.duration_seconds?escapeHtml(String(song.duration_seconds))+' sec • ':''}${timeAgo(new Date(song.created_at).getTime())}</div></div><span class='generation-state' data-status='${escapeHtml(status)}'>${escapeHtml(statusLabel)}</span></div>
+          <div class='small song-concept'>${escapeHtml(song.description||'')}</div>
+          ${errorNote}
+          <div class='song-audio-wrap'>${song.audio_path?`<audio class='music-player' controls preload='metadata'></audio>`:`<div class='small'>${status==='generating'?'Music generation is running…':'No audio generated yet.'}</div>`}</div>
+          <div class='song-actions'></div></div>`;
+        const actions=row.querySelector('.song-actions');
+        if(song.status==='ready'){
+          const pub=document.createElement('button'); pub.className='btn btn-primary'; pub.textContent='Publish'; pub.addEventListener('click',async()=>{pub.disabled=true;try{await publishSong(song);}catch(err){showToast(err.message||'Could not publish');pub.disabled=false;}}); actions.appendChild(pub);
+          const regen=document.createElement('button'); regen.className='btn'; regen.textContent='Regenerate'; regen.addEventListener('click',async()=>{regen.disabled=true;try{await retrySongGeneration(song);}catch(err){showToast(err.message||'Could not regenerate');regen.disabled=false;}}); actions.appendChild(regen);
+        }else if(song.status==='published'){
+          const mark=document.createElement('span'); mark.className='small'; mark.textContent='Live on StreamNest'; actions.appendChild(mark);
+        }else if(song.status!=='generating'){
+          const retry=document.createElement('button'); retry.className='btn btn-primary'; retry.textContent=latestJob&&latestJob.status==='queued'?'Generate now':'Retry generation'; retry.addEventListener('click',async()=>{retry.disabled=true;retry.textContent='Generating…';try{await retrySongGeneration(song);}catch(err){showToast(err.message||'Could not generate song');retry.disabled=false;retry.textContent='Try again';}}); actions.appendChild(retry);
+        }
+        const audio=row.querySelector('audio.music-player');
+        if(audio) resolveSongAudio(song,audio);
+        list.appendChild(row);
+      });
+      section.appendChild(list); host.appendChild(section);
+    }).catch(err=>{host.innerHTML=`<div class='provider-note'>Could not load artists: ${escapeHtml(err.message||String(err))}</div>`;});
+  }
+
