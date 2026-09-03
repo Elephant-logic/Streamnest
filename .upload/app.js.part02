@@ -1,0 +1,150 @@
+    if(!cloud.user){ setRoute('auth'); return; }
+    const html=`<h3>Create AI Artist</h3>
+      <p class='small'>Character Lab creates a persistent artist blueprint. The music-provider step is queued separately so API secrets never live in the browser.</p>
+      <div class='form-row' id='ai-builder'>
+        <textarea class='input' id='ai-brief' placeholder='Creative brief — e.g. nocturnal electronic artist inspired by coastal cities'></textarea>
+        <input class='input' id='ai-genres' placeholder='Genres, comma separated (e.g. synthpop, ambient)'>
+        <input class='input' id='ai-mood' placeholder='Mood / world (e.g. melancholic, neon, hopeful)'>
+        <select class='input' id='ai-autonomy'><option value='manual'>Manual approval</option><option value='assisted'>Assisted</option><option value='autonomous'>Autonomous (generation still budget-limited)</option></select>
+        <button class='btn btn-primary' id='ai-generate'>Generate character blueprint</button>
+        <div id='ai-preview'></div>
+      </div>`;
+    showPanel(html);
+    document.getElementById('ai-generate').addEventListener('click',()=>{
+      const brief=document.getElementById('ai-brief').value.trim();
+      const genres=document.getElementById('ai-genres').value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,8);
+      const mood=document.getElementById('ai-mood').value.trim();
+      const autonomy=document.getElementById('ai-autonomy').value;
+      const bp=buildArtistBlueprint(brief,genres,mood);
+      const preview=document.getElementById('ai-preview');
+      preview.innerHTML=`<div class='card' style='margin-top:8px'>
+        <div class='ai-meta'><div class='ai-avatar' style='background:${bp.avatarColor}'>${escapeHtml(bp.name.split(' ').map(x=>x[0]).join('').slice(0,2))}</div><div><span class='ai-badge'>✨ AI ARTIST</span><h3 style='margin:6px 0 2px'>${escapeHtml(bp.name)}</h3><div class='small'>${escapeHtml(bp.handle)}</div></div></div>
+        <div class='form-row' style='margin-top:12px'>
+          <input class='input' id='bp-name' value='${escapeHtml(bp.name)}' placeholder='Artist name'>
+          <input class='input' id='bp-handle' value='${escapeHtml(bp.handle)}' placeholder='Handle'>
+          <textarea class='input' id='bp-bio'>${escapeHtml(bp.bio)}</textarea>
+          <textarea class='input' id='bp-personality'>${escapeHtml(bp.personality)}</textarea>
+          <textarea class='input' id='bp-direction'>${escapeHtml(bp.creativeDirection)}</textarea>
+          <textarea class='input' id='bp-voice'>${escapeHtml(bp.voiceStyle)}</textarea>
+          <button class='btn btn-primary' id='bp-save'>Create this AI artist</button>
+          <div class='small' id='bp-message'></div>
+        </div></div>`;
+      document.getElementById('bp-save').addEventListener('click',async()=>{
+        const message=document.getElementById('bp-message'); message.textContent='Saving artist…';
+        try{
+          const finalBp={...bp,
+            name:document.getElementById('bp-name').value.trim(),
+            handle:normalizeHandle(document.getElementById('bp-handle').value),
+            bio:document.getElementById('bp-bio').value.trim(),
+            personality:document.getElementById('bp-personality').value.trim(),
+            creativeDirection:document.getElementById('bp-direction').value.trim(),
+            voiceStyle:document.getElementById('bp-voice').value.trim()
+          };
+          finalBp.systemPrompt=`You are ${finalBp.name}, an explicitly AI-generated music artist on StreamNest. Make original work only. Never impersonate a real artist or claim to be human. Your personality is ${finalBp.personality}. Your creative direction is: ${finalBp.creativeDirection}. Maintain continuity while still experimenting.`;
+          await saveAiArtist(finalBp,genres,autonomy);
+          hidePanel(); showToast(`${finalBp.name} created`); setRoute('ai-artists');
+        }catch(err){ console.error(err); message.textContent=err.message || 'Could not create artist.'; }
+      });
+    });
+  }
+
+  async function saveAiArtist(bp, genres, autonomy){
+    if(!cloud.user) throw new Error('Sign in first.');
+    const handle=normalizeHandle(bp.handle || bp.name + '_' + Date.now().toString(36).slice(-4));
+    const {data:creator,error:creatorError}=await cloud.client.from('creators').insert({
+      owner_user_id:cloud.user.id,creator_type:'ai',name:bp.name,handle,avatar_color:bp.avatarColor,bio:bp.bio,is_public:true
+    }).select('*').single();
+    if(creatorError) throw creatorError;
+    const {error:agentError}=await cloud.client.from('ai_agents').insert({
+      creator_id:creator.id,owner_user_id:cloud.user.id,personality:bp.personality,genres,creative_direction:bp.creativeDirection,
+      voice_style:bp.voiceStyle,system_prompt:bp.systemPrompt,autonomy_level:autonomy,monthly_generation_limit:10,generation_budget_cents:0,
+      memory:{origin:'StreamNest Character Lab',created_from_brief:true}
+    });
+    if(agentError){ await cloud.client.from('creators').delete().eq('id',creator.id); throw agentError; }
+    await refreshCloudState();
+    return creator;
+  }
+
+  function makeAiSongDraft(creator, agent, idea){
+    const genre=(agent && agent.genres && agent.genres[0]) || 'electronic';
+    const seed=hashText(`${creator.name}|${idea||''}|${Date.now()}`);
+    const wordsA=['Afterglow','Satellite','Glass','Signal','Tide','Static','Gravity','Neon','Memory','Horizon','Velvet','Electric'];
+    const wordsB=['Hearts','Weather','Rooms','Dreams','Lines','Ocean','Hours','Ghosts','Light','City','Echoes','Sky'];
+    const title=`${wordsA[seed%wordsA.length]} ${wordsB[(seed>>>7)%wordsB.length]}`;
+    const fallback=`${creator.name} decides what to make next from its established ${genre} identity and creative direction.`;
+    const concept=String(idea||'').trim() || fallback;
+    const prompt=`Make the next original ${genre} release for ${creator.name}. Concept: ${concept}. ${agent ? 'Creative direction: '+agent.creative_direction+'. Voice/style: '+agent.voice_style+'. Personality: '+agent.personality+'.' : ''}`;
+    return {title,concept,prompt};
+  }
+
+  async function getFunctionErrorMessage(error){
+    let message=(error && error.message) || 'Song generation failed.';
+    try{
+      if(error && error.context && typeof error.context.json==='function'){
+        const payload=await error.context.json();
+        message=(payload && (payload.error || payload.message)) || message;
+      }
+    }catch(_){ }
+    return message;
+  }
+
+  async function invokeSongGeneration(jobId){
+    if(!cloud.client || !cloud.user) throw new Error('Sign in first.');
+    const {data,error}=await cloud.client.functions.invoke('generate-song',{body:{job_id:jobId}});
+    if(error) throw new Error(await getFunctionErrorMessage(error));
+    if(data && data.error) throw new Error(data.error);
+    return data;
+  }
+
+  async function createAndGenerateSong(creator, agent, options={}){
+    if(!cloud.user) return setRoute('auth');
+    const duration=Math.max(10,Math.min(60,Number(options.duration)||30));
+    const draft=makeAiSongDraft(creator,agent,options.idea);
+    const {data:song,error:songError}=await cloud.client.from('songs').insert({
+      owner_user_id:cloud.user.id,
+      creator_id:creator.id,
+      title:draft.title,
+      description:draft.concept,
+      status:'draft',
+      is_public:false
+    }).select('*').single();
+    if(songError) throw songError;
+    const {data:job,error:jobError}=await cloud.client.from('generation_jobs').insert({
+      owner_user_id:cloud.user.id,
+      creator_id:creator.id,
+      song_id:song.id,
+      provider:'elevenlabs',
+      concept:draft.concept,
+      prompt:draft.prompt,
+      requested_duration_seconds:duration,
+      status:'queued'
+    }).select('*').single();
+    if(jobError){
+      await cloud.client.from('songs').delete().eq('id',song.id).eq('owner_user_id',cloud.user.id);
+      throw jobError;
+    }
+    try{
+      const result=await invokeSongGeneration(job.id);
+      await refreshCloudState();
+      showToast(`“${draft.title}” is ready to preview`);
+      return result;
+    }catch(err){
+      await refreshCloudState();
+      throw err;
+    }finally{
+      if(document.body.getAttribute('data-route')==='ai-artists') renderRoute('ai-artists');
+    }
+  }
+
+  function openCreateSongPanel(creator, agent){
+    if(!cloud.user){setRoute('auth');return;}
+    const genres=((agent&&agent.genres)||[]).join(', ') || 'the artist’s established style';
+    showPanel(`<h3>Create a song — ${escapeHtml(creator.name)}</h3>
+      <p class='small'>Give the artist an idea, or leave it blank and let the character decide from its personality and creative direction.</p>
+      <div class='form-row'>
+        <label class='small' for='song-idea'>Optional idea</label>
+        <textarea class='input' id='song-idea' rows='4' placeholder='e.g. A restless night drive through a rain-soaked city'></textarea>
+        <label class='small' for='song-duration'>Demo length</label>
+        <select class='input' id='song-duration'><option value='15'>15 seconds</option><option value='30' selected>30 seconds</option><option value='45'>45 seconds</option><option value='60'>60 seconds</option></select>
+        <div class='small'>Character genres: ${escapeHtml(genres)}. The server also adds the artist's personality, voice style and creative direction to the generation brief.</div>
+        <button class='btn btn-primary' id='generate-song-now'>Generate song</button>
