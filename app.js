@@ -1140,7 +1140,7 @@
     const cat=document.createElement('select'); cat.className='input'; CATEGORIES.filter(x=>x!=='All').forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;cat.appendChild(o);}); form.appendChild(cat);
     const tags=document.createElement('input'); tags.className='input'; tags.placeholder='Tags (comma separated)'; form.appendChild(tags);
     const thumbBtn=document.createElement('button'); thumbBtn.className='btn'; thumbBtn.textContent='Generate Thumbnail'; form.appendChild(thumbBtn);
-    const publishBtn=document.createElement('button'); publishBtn.className='btn btn-primary'; publishBtn.textContent='Publish to my profile'; form.appendChild(publishBtn);
+    const publishBtn=document.createElement('button'); publishBtn.className='btn btn-primary'; publishBtn.textContent='Publish to my profile'; publishBtn.disabled=true; form.appendChild(publishBtn);
     const uploadStatus=document.createElement('div'); uploadStatus.className='small'; form.appendChild(uploadStatus);
     c.appendChild(form); view.appendChild(c);
 
@@ -1149,7 +1149,7 @@
     fileIn.addEventListener('change',()=>{
       const f=fileIn.files[0]; if(!f) return;
       if(!allowedTypes.includes(f.type)){alert('Unsupported video type. Use MP4, WebM, MOV or M4V.');fileIn.value='';return;}
-      fileObj=f; durationSeconds=0;
+      fileObj=f; durationSeconds=0; publishBtn.disabled=true;
       if(fileUrl) URL.revokeObjectURL(fileUrl);
       fileUrl=URL.createObjectURL(f);
       preview.innerHTML='';
@@ -1159,6 +1159,8 @@
       v.addEventListener('loadedmetadata',()=>{
         durationSeconds=Number.isFinite(v.duration)?Math.max(0,Math.round(v.duration)):0;
         fileMeta.textContent=`${secondsToClock(durationSeconds)} • ${mb} MB • ${f.type || 'video'}`;
+        if(durationSeconds>0){ publishBtn.disabled=false; uploadStatus.textContent='Video ready to publish.'; }
+        else { publishBtn.disabled=true; uploadStatus.textContent='Could not read this video duration. Try a standard MP4/WebM export.'; }
       },{once:true});
     });
 
