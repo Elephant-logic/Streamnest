@@ -233,18 +233,29 @@
       host.innerHTML=`<div class='auth-tabs'><button class='chip ${mode==='signup'?'active':''}' id='tab-signup'>Create account</button><button class='chip ${mode==='signin'?'active':''}' id='tab-signin'>Sign in</button></div>
         <form id='auth-form' class='form-row'>
           ${mode==='signup'?"<input class='input' id='auth-name' maxlength='60' placeholder='Display name' autocomplete='name' required>":''}
-          <input class='input' id='auth-email' type='email' placeholder='Email' autocomplete='email' required>
-          <input class='input' id='auth-password' type='password' placeholder='Password (8+ characters)' minlength='8' autocomplete='${mode==='signup'?'new-password':'current-password'}' required>
+          <input class='input' id='auth-email' type='text' inputmode='text' name='streamnest-email' placeholder='Email address' autocomplete='off' autocapitalize='none' autocorrect='off' spellcheck='false' enterkeyhint='next' required>
+          <input class='input' id='auth-password' type='password' placeholder='Password (8+ characters)' minlength='8' autocomplete='off' autocapitalize='none' autocorrect='off' spellcheck='false' enterkeyhint='done' required>
+          <label class='small auth-show-password'><input id='auth-show-password' type='checkbox'> Show password</label>
           <button class='btn btn-primary' type='submit'>${mode==='signup'?'Create StreamNest account':'Sign in'}</button>
           <div id='auth-message' class='small'></div>
         </form>`;
       host.querySelector('#tab-signup').addEventListener('click',()=>{mode='signup';paint();});
       host.querySelector('#tab-signin').addEventListener('click',()=>{mode='signin';paint();});
+      const passwordInput=host.querySelector('#auth-password');
+      const showPassword=host.querySelector('#auth-show-password');
+      showPassword.addEventListener('change',()=>{
+        passwordInput.type=showPassword.checked?'text':'password';
+      });
       host.querySelector('#auth-form').addEventListener('submit', async (e)=>{
         e.preventDefault();
         const message=host.querySelector('#auth-message');
-        const email=host.querySelector('#auth-email').value.trim();
+        const email=host.querySelector('#auth-email').value.trim().toLowerCase();
         const password=host.querySelector('#auth-password').value;
+        if(!email || !email.includes('@')){
+          message.textContent='Enter your email address.';
+          host.querySelector('#auth-email').focus();
+          return;
+        }
         message.textContent = mode==='signup' ? 'Creating account…' : 'Signing in…';
         try{
           if(mode==='signup'){
