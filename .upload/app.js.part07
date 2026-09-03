@@ -1,0 +1,118 @@
+      fileObj = f; if(fileUrl) URL.revokeObjectURL(fileUrl); fileUrl = URL.createObjectURL(f); preview.innerHTML=''; const v = document.createElement('video'); v.controls=true; v.src=fileUrl; v.style.maxWidth='100%'; v.style.maxHeight='160px'; preview.appendChild(v);
+    });
+
+    thumbBtn.addEventListener('click', ()=>{
+      // generate thumbnail from title/colors
+      thumbData = makeThumbSVG(title.value || 'Untitled', Math.floor(Math.random()*10), cat.value, {w:640,h:360});
+      preview.innerHTML = `<img src='${thumbData}' style='width:100%;height:160px;object-fit:cover;border-radius:8px'>`;
+    });
+
+    publishBtn.addEventListener('click', ()=>{
+      if(!fileObj){ alert('Please choose a video file to upload.'); return; }
+      if(!title.value.trim()){ alert('Please enter a title.'); return; }
+      // Simulate upload progress
+      const vidId = 'v'+(Date.now());
+      const meta = {id:vidId,title:title.value,description:desc.value,creatorId:state.creators[0].id,creatorName:state.creators[0].name,category:cat.value,tags:tags.value.split(',').map(s=>s.trim()).filter(Boolean),duration:'0:00',views:0,likes:0,dislikes:0,uploadDate:Date.now(),thumbnailStyle:{type:'data',data:thumbData},videoSource:{objectUrl:URL.createObjectURL(fileObj)},comments:[],saved:false,liked:false,disliked:false,watchProgress:0,published:true};
+      state.videos.unshift(meta); state.uploads.push(meta.id); state.creators[0].videos.push(meta.id); saveState(); showToast('Upload complete — video published'); setRoute('watch',{id:meta.id});
+    });
+  }
+
+  // Channel page
+  function renderChannel(params){ const id = params.id; const ch = state.creators.find(c=>c.id===id); const wrap=document.createElement('div'); wrap.className='screen-page'; if(!ch){ wrap.appendChild(makeNotFound('Channel not found')); view.appendChild(wrap); return;} wrap.innerHTML=`<div style='display:flex;gap:12px;align-items:center'><div class='preview-thumb' style='width:120px;height:120px;border-radius:12px'>${ch.name.split(' ').map(s=>s[0]).slice(0,2).join('')}</div><div><h2>${ch.name} ${ch.verified?'<span class="small">✔</span>':''}</h2><div class='small'>${formatSubs(ch.subscribers)} • Joined ${timeAgo(ch.joined)}</div><div style='margin-top:8px' class='small'>${escapeHtml(ch.description)}</div></div></div>`;
+    const tab = document.createElement('div'); tab.style.marginTop='12px'; tab.innerHTML=`<button class='btn' data-view='home'>Home</button> <button class='btn' data-view='videos'>Videos</button> <button class='btn' data-view='about'>About</button>`; wrap.appendChild(tab);
+    const content = document.createElement('div'); content.style.marginTop='12px'; wrap.appendChild(content);
+    tab.querySelector('[data-view="home"]').addEventListener('click', ()=>{ content.innerHTML=''; content.appendChild(makeRow('Channel uploads', state.videos.filter(v=>v.creatorId===ch.id), null)); });
+    tab.querySelector('[data-view="videos"]').addEventListener('click', ()=>{ content.innerHTML=''; const grid = document.createElement('div'); grid.className='grid'; state.videos.filter(v=>v.creatorId===ch.id).forEach(v=>grid.appendChild(makeCard(v))); content.appendChild(grid); });
+    tab.querySelector('[data-view="about"]').addEventListener('click', ()=>{ content.innerHTML=`<div class='card small'>${escapeHtml(ch.description)}</div>`; });
+    view.appendChild(wrap);
+  }
+
+  // Playlists
+  function renderPlaylists(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Playlists</h2>'; if(state.playlists.length===0){ const p=document.createElement('p'); p.textContent='No playlists yet. Create one from a video card.'; c.appendChild(p);} else{ state.playlists.forEach(pl=>{ const el=document.createElement('div'); el.className='card'; el.innerHTML=`<div style='display:flex;justify-content:space-between;align-items:center'><div><div style='font-weight:700'>${pl.name}</div><div class='small'>${pl.videos.length} videos</div></div><div><button class='btn'>Open</button></div></div>`; c.appendChild(el); }); } view.appendChild(c); }
+
+  function renderLibrary(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Library</h2>'; const saved = state.videos.filter(v=>v.saved); if(saved.length===0){ c.appendChild(Object.assign(document.createElement('p'),{textContent:'No saved videos.'})); } else{ const grid=document.createElement('div'); grid.className='grid'; saved.forEach(v=>grid.appendChild(makeCard(v))); c.appendChild(grid);} view.appendChild(c); }
+
+  function renderHistory(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>History</h2>'; if(state.history.length===0){ c.appendChild(Object.assign(document.createElement('p'),{textContent:'No watch history.'})); } else{ const list=document.createElement('div'); state.history.forEach(h=>{ const v=state.videos.find(x=>x.id===h.id); const el=document.createElement('div'); el.className='card'; el.style.display='flex'; el.style.justifyContent='space-between'; el.innerHTML=`<div><div style='font-weight:700'>${v?v.title:h.id}</div><div class='small'>Last watched ${timeAgo(h.lastWatched)} • ${(h.progress*100).toFixed(0)}%</div></div><div><button class='btn'>Remove</button></div>`; list.appendChild(el); }); c.appendChild(list);} view.appendChild(c); }
+
+  function renderWatchLater(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Watch Later</h2>'; const list=state.videos.filter(v=>v.saved); if(list.length===0) c.appendChild(Object.assign(document.createElement('p'),{textContent:'No items.'})); else{ const grid=document.createElement('div'); grid.className='grid'; list.forEach(v=>grid.appendChild(makeCard(v))); c.appendChild(grid);} view.appendChild(c); }
+
+  function renderLiked(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Liked Videos</h2>'; const list=state.videos.filter(v=>v.liked); if(list.length===0) c.appendChild(Object.assign(document.createElement('p'),{textContent:'No liked videos.'})); else{ const grid=document.createElement('div'); grid.className='grid'; list.forEach(v=>grid.appendChild(makeCard(v))); c.appendChild(grid);} view.appendChild(c); }
+
+  // Creator studio overview
+  function renderStudio(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Creator Studio</h2>'; // dashboard cards
+    const totals = {views:state.videos.reduce((s,v)=>s+v.views,0),videos:state.videos.length,subs:state.creators.reduce((s,c)=>s+(c.subscribers||0),0)};
+    const cards = document.createElement('div'); cards.style.display='grid'; cards.style.gridTemplateColumns='repeat(auto-fit,minmax(180px,1fr))'; cards.style.gap='10px'; ['Views','Videos','Subscribers'].forEach((k,i)=>{ const card=document.createElement('div'); card.className='card'; card.innerHTML=`<div style='font-size:18px;font-weight:700'>${k}</div><div class='small' style='margin-top:6px'>${k==='Views'?totals.views:(k==='Videos'?totals.videos:totals.subs)}</div>`; cards.appendChild(card); }); c.appendChild(cards);
+    // content table
+    const table = document.createElement('div'); table.style.marginTop='12px'; table.innerHTML='<h3>Your Content</h3>';
+    const grid = document.createElement('div'); grid.className='grid'; state.videos.slice(0,12).forEach(v=>{ const el = document.createElement('div'); el.className='card'; el.innerHTML=`<div style='display:flex;gap:8px'><img src='${makeThumbSVG(v.title,parseInt(v.id.replace(/\D/g,'')))}' style='width:120px;height:68px;object-fit:cover;border-radius:6px'><div style='flex:1'><div style='font-weight:700'>${v.title}</div><div class='small'>${v.views} views • ${timeAgo(v.uploadDate)}</div></div></div>`; grid.appendChild(el); }); table.appendChild(grid); c.appendChild(table);
+    view.appendChild(c);
+  }
+
+  // Notifications
+  function pushNotification(n){ n.id='n'+Date.now(); n.read=false; n.ts=Date.now(); state.notifications.unshift(n); if(state.notifications.length>200) state.notifications.pop(); saveState(); renderNotifCount(); }
+  function renderNotifCount(){ const unread = state.notifications.filter(n=>!n.read).length; if(unread>0){ notifCount.hidden=false; notifCount.textContent = unread; } else { notifCount.hidden=true; } }
+  function renderNotifications(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Notifications</h2>'; if(state.notifications.length===0) c.appendChild(Object.assign(document.createElement('p'),{textContent:'No notifications.'})); else{ const list=document.createElement('div'); state.notifications.forEach(n=>{ const el=document.createElement('div'); el.className='card'; el.innerHTML=`<div style='display:flex;justify-content:space-between;align-items:center'><div><div style='font-weight:700'>${n.text}</div><div class='small'>${timeAgo(n.ts)}</div></div><div><button class='btn'>Mark</button></div></div>`; el.querySelector('button').addEventListener('click', ()=>{ n.read=true; saveState(); renderNotifications(); renderNotifCount(); }); list.appendChild(el); }); c.appendChild(list);} view.appendChild(c); }
+  renderNotifCount();
+
+  // Profile — cloud-backed when signed in, local guest profile otherwise.
+  function renderProfile(){
+    const c=document.createElement('div'); c.className='screen-page'; view.appendChild(c);
+    if(!cloud.user){
+      c.innerHTML=`<h2>Profile</h2><div class='card'><h3>Guest profile</h3><p class='small'>You're using the local browser demo. Create an account to sync your identity and AI artists.</p><div class='profile-actions'><button class='btn btn-primary' id='profile-auth'>Create account / Sign in</button></div></div>`;
+      c.querySelector('#profile-auth').addEventListener('click',()=>setRoute('auth')); return;
+    }
+    c.innerHTML=`<h2>Profile</h2>${cloudStatusHtml()}<div id='cloud-profile'><div class='small'>Loading profile…</div></div>`;
+    refreshCloudState().then(()=>{
+      if(document.body.getAttribute('data-route')!=='profile') return;
+      const p=cloud.profile; const host=c.querySelector('#cloud-profile');
+      host.innerHTML=`<div class='card'><div style='display:flex;gap:12px;align-items:center'><div class='preview-thumb' style='width:120px;height:120px;border-radius:12px;background:${escapeHtml(p.avatar_color||'#FF6B5A')}'>${escapeHtml(p.username.split(' ').map(x=>x[0]).slice(0,2).join(''))}</div><div><div style='font-weight:700'>${escapeHtml(p.username)}</div><div class='small'>${escapeHtml(p.handle)} • Joined ${timeAgo(new Date(p.joined_at).getTime())}</div><div style='margin-top:8px' class='small'>${escapeHtml(p.bio||'')}</div></div></div></div><div class='profile-actions'><button class='btn btn-primary' id='edit-cloud-profile'>Edit profile</button><button class='btn' id='open-ai-artists'>AI Artists</button><button class='btn' id='profile-signout'>Sign out</button></div>`;
+      host.querySelector('#open-ai-artists').addEventListener('click',()=>setRoute('ai-artists'));
+      host.querySelector('#profile-signout').addEventListener('click',async()=>{await cloud.client.auth.signOut();showToast('Signed out');setRoute('home');});
+      host.querySelector('#edit-cloud-profile').addEventListener('click',async()=>{
+        const name=prompt('Display name',p.username); if(!name) return;
+        const bio=prompt('Bio',p.bio||''); if(bio===null) return;
+        const {data,error}=await cloud.client.from('profiles').update({username:name.trim().slice(0,60),bio:bio.trim().slice(0,500),updated_at:new Date().toISOString()}).eq('id',cloud.user.id).select('*').single();
+        if(error){showToast(error.message);return;} cloud.profile=data; syncLocalProfile(); updateAuthUI(); renderRoute('profile');
+      });
+    }).catch(err=>{c.querySelector('#cloud-profile').innerHTML=`<div class='provider-note'>${escapeHtml(err.message||String(err))}</div>`;});
+  }
+
+  // Settings
+  function renderSettings(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Settings</h2>'; const form=document.createElement('div'); form.className='form-row'; const dark = document.createElement('label'); dark.innerHTML=`<input type='checkbox' id='s-dark' ${state.settings.darkMode?'checked':''}/> Dark mode`; form.appendChild(dark);
+    const auto = document.createElement('label'); auto.innerHTML=`<input type='checkbox' id='s-auto' ${state.settings.autoplay?'checked':''}/> Autoplay`; form.appendChild(auto);
+    const rm = document.createElement('label'); rm.innerHTML=`<input type='checkbox' id='s-rm' ${state.settings.reduceMotion?'checked':''}/> Reduce motion`; form.appendChild(rm);
+    const exportBtn = document.createElement('button'); exportBtn.className='btn'; exportBtn.textContent='Export data'; exportBtn.addEventListener('click', ()=>{ const data = JSON.stringify(state); const blob = new Blob([data],{type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='streamnest-data.json'; a.click(); URL.revokeObjectURL(url); });
+    const importBtn = document.createElement('button'); importBtn.className='btn'; importBtn.textContent='Import data'; importBtn.addEventListener('click', ()=>{ const f = document.createElement('input'); f.type='file'; f.accept='application/json'; f.onchange = ()=>{ const file = f.files[0]; const r = new FileReader(); r.onload = ()=>{ try{ const parsed = JSON.parse(r.result); if(parsed && parsed.version){ state = Object.assign(state, parsed); saveState(); location.reload(); } else alert('Invalid import'); }catch(e){alert('Failed to import: '+e.message);} }; r.readAsText(file); }; f.click(); });
+    form.appendChild(exportBtn); form.appendChild(importBtn); c.appendChild(form); view.appendChild(c);
+    document.getElementById('s-dark').addEventListener('change',(e)=>{ state.settings.darkMode = e.target.checked; document.body.classList.toggle('sn-dark', state.settings.darkMode); saveState(); });
+    document.getElementById('s-auto').addEventListener('change',(e)=>{ state.settings.autoplay = e.target.checked; saveState(); });
+    document.getElementById('s-rm').addEventListener('change',(e)=>{ state.settings.reduceMotion = e.target.checked; saveState(); });
+  }
+
+  function renderHelp(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Help & About</h2><p class="small">StreamNest now supports Supabase-backed user accounts, persistent profiles and AI artist records. The original video demo data and browser uploads remain local/session-based for now. Music-generation provider integration is the next server-side step.</p>'; view.appendChild(c); }
+
+  // Short videos (simulated vertical)
+  function renderShorts(){ const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Shorts</h2>'; const list = state.videos.slice(0,6); const container = document.createElement('div'); container.style.display='flex'; container.style.overflow='hidden'; container.style.gap='8px'; list.forEach((v,i)=>{ const el = document.createElement('div'); el.className='card'; el.style.minWidth='100%'; el.style.height='480px'; el.style.display='flex'; el.style.flexDirection='column'; el.innerHTML=`<div style='flex:1;background:#000;border-radius:12px;display:flex;align-items:end;justify-content:space-between;padding:12px'><div style='color:#fff;font-weight:700'>${v.title}</div><div style='color:#fff'>${v.creatorName}</div></div>`; container.appendChild(el); }); c.appendChild(container); const nav = document.createElement('div'); nav.style.display='flex'; nav.style.gap='8px'; nav.style.marginTop='8px'; const prev = document.createElement('button'); prev.className='btn'; prev.textContent='Previous'; const next = document.createElement('button'); next.className='btn'; next.textContent='Next'; let idx=0; function show(i){ container.style.transform = `translateX(-${i*100}%)`; } prev.addEventListener('click', ()=>{ idx = Math.max(0, idx-1); show(idx); }); next.addEventListener('click', ()=>{ idx = Math.min(list.length-1, idx+1); show(idx); }); nav.appendChild(prev); nav.appendChild(next); c.appendChild(nav); view.appendChild(c); }
+
+  // Utilities
+  function formatDate(ts){ const d=new Date(ts); return d.toISOString(); }
+
+  // Debounce
+  function debounce(fn,wait){ let t; return function(...a){ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),wait); }; }
+
+  // Start app
+  function transitionToHome(){ document.body.setAttribute('data-route','home'); splash.style.display='none'; setRoute('home'); }
+
+  // Initial splash show
+  function init(){ document.body.classList.toggle('sn-dark', state.settings.darkMode);
+    initCloud();
+    // show splash first
+    splash.style.display='flex'; document.getElementById('enter-btn').focus();
+    // render initial route
+    renderNotifCount();
+  }
+  init();
+
+  // small helpers for corrupted localStorage behavior demonstration
+  window._streamnest = {state,cloud,saveState,loadState,refreshCloudState,buildArtistBlueprint};
+})();
