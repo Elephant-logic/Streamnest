@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>STREAMNEST — Watch. Create. Connect.</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="sn-dark" data-route="splash">
+  <!-- Safe area for mobile -->
+  <div class="safe-area-top"></div>
+
+  <!-- Splash Screen -->
+  <main id="app">
+    <section id="splash" class="screen screen--center">
+      <div class="logo-wrap" aria-hidden="false">
+        <svg id="sn-logo" viewBox="0 0 120 120" width="120" height="120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="g1" x1="0" x2="1">
+              <stop offset="0" stop-color="#FF6B5A" />
+              <stop offset="1" stop-color="#00E1D6" />
+            </linearGradient>
+          </defs>
+          <rect x="10" y="10" width="100" height="100" rx="18" fill="#1e1e1f" stroke="url(#g1)" stroke-width="3" />
+          <path d="M30 36 L76 60 L30 84 Z" fill="url(#g1)" transform="translate(2,0)" />
+          <circle cx="28" cy="28" r="6" fill="#FF6B5A" opacity="0.85" />
+        </svg>
+      </div>
+      <h1 class="app-title">STREAMNEST</h1>
+      <p class="tagline">Watch. Create. Connect.</p>
+      <div class="splash-loader" aria-hidden="true">
+        <div class="dot d1"></div>
+        <div class="dot d2"></div>
+        <div class="dot d3"></div>
+      </div>
+      <div class="splash-actions">
+        <button id="account-btn" class="btn btn-primary" aria-label="Create account or sign in">Create account / Sign in</button>
+        <button id="enter-btn" class="btn" aria-label="Continue as guest">Continue as guest</button>
+      </div>
+      <p class="small splash-note">Accounts sync profiles and AI artists across devices.</p>
+    </section>
+
+    <!-- App Shell -->
+    <header id="topbar" class="topbar" role="banner">
+      <div class="topbar-left">
+        <button id="menu-toggle" class="icon-btn" aria-label="Toggle menu" title="Menu">☰</button>
+        <div id="brand" class="brand" role="img" aria-label="StreamNest logo">
+          <svg viewBox="0 0 80 24" width="80" height="24" aria-hidden="true">
+            <rect x="0" y="0" width="24" height="24" rx="5" fill="#1f1f21"></rect>
+            <path d="M4 4 L16 12 L4 20 Z" fill="#FF6B5A"></path>
+          </svg>
+          <span class="brand-name">STREAMNEST</span>
+        </div>
+      </div>
+      <div class="topbar-center">
+        <form id="search-form" role="search" aria-label="Search videos">
+          <input id="search-input" type="search" placeholder="Search videos, creators, tags" aria-label="Search" autocomplete="off">
+          <button type="button" id="voice-btn" class="icon-btn" aria-label="Voice prompt">🎤</button>
+          <button type="submit" id="search-btn" class="icon-btn" aria-label="Search">🔍</button>
+        </form>
+        <div id="recent-searches" class="recent-searches" hidden></div>
+      </div>
+      <div class="topbar-right">
+        <button id="upload-btn" class="icon-btn" aria-label="Upload">⤴︎</button>
+        <button id="notif-btn" class="icon-btn" aria-label="Notifications">🔔<span id="notif-count" class="badge" hidden>0</span></button>
+        <button id="profile-btn" class="avatar-btn" aria-label="User profile" title="Profile"><span class="avatar-initial">S</span></button>
+      </div>
+    </header>
+
+    <div id="shell" class="shell">
+      <aside id="sidebar" class="sidebar" aria-label="Sidebar navigation">
+        <nav>
+          <ul>
+            <li><button data-route="home" class="side-link" aria-label="Home">🏠 Home</button></li>
+            <li><button data-route="explore" class="side-link">🌐 Explore</button></li>
+            <li><button data-route="subscriptions" class="side-link">⭐ Subscriptions</button></li>
+            <li><button data-route="library" class="side-link">📚 Library</button></li>
+            <li><button data-route="history" class="side-link">🕒 History</button></li>
+            <li><button data-route="watchlater" class="side-link">⏱ Watch Later</button></li>
+            <li><button data-route="liked" class="side-link">👍 Liked</button></li>
+            <li><button data-route="playlists" class="side-link">🎞 Playlists</button></li>
+            <li><button data-route="creator-studio" class="side-link">🎛 Creator Studio</button></li>
+            <li><button data-route="ai-artists" class="side-link">✨ AI Artists</button></li>
+            <li><button data-route="settings" class="side-link">⚙ Settings</button></li>
+            <li><button data-route="help" class="side-link">❓ Help</button></li>
+          </ul>
+        </nav>
+        <div class="sidebar-footer">
+          <button id="sidebar-toggle" class="icon-btn" aria-label="Collapse sidebar">⇤</button>
+        </div>
+      </aside>
+
+      <section id="main" class="main" role="main">
+        <!-- category chips -->
+        <div id="category-bar" class="category-bar" aria-label="Categories"></div>
+
+        <div id="view" class="view-area">
+          <!-- dynamic content injected here -->
+        </div>
+      </section>
+
+      <aside id="rightpanel" class="rightpanel" aria-label="Recommendations" hidden>
+        <h3>Up next</h3>
+        <div id="upnext-list"></div>
+      </aside>
+    </div>
+
+    <!-- mobile bottom nav -->
+    <nav id="bottombar" class="bottombar" aria-label="Bottom navigation">
+      <button class="bb-btn" data-route="home">Home</button>
+      <button class="bb-btn" data-route="shorts">Shorts</button>
+      <button id="create-btn" class="bb-create">＋</button>
+      <button class="bb-btn" data-route="subscriptions">Subs</button>
+      <button class="bb-btn" data-route="library">Library</button>
+    </nav>
+
+    <!-- global overlays -->
+    <div id="overlay" class="overlay" hidden></div>
+    <div id="panel" class="panel" hidden></div>
+
+    <footer class="safe-area-bottom"></footer>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4"></script>
+  <script src="supabase-config.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
