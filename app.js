@@ -678,10 +678,12 @@
   profileBtn.addEventListener('click', ()=>{setRoute('profile');});
 
   // Bottom nav + sidebar nav
-  document.querySelectorAll('[data-route]').forEach(btn=>{
-    btn.addEventListener('click', (e)=>{ const r = btn.getAttribute('data-route'); setRoute(r); });
+  document.querySelectorAll('button[data-route], a[data-route]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const r = btn.getAttribute('data-route');
+      if(r) setRoute(r);
+    });
   });
-  document.querySelectorAll('.side-link').forEach(btn=>{btn.addEventListener('click', ()=>setRoute(btn.getAttribute('data-route')));});
 
   // Keyboard shortcuts for player later (delegated when player active)
   document.addEventListener('keydown', (e)=>{
