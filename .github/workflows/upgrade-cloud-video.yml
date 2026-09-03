@@ -1,0 +1,347 @@
+name: Upgrade StreamNest cloud video uploads
+
+on:
+  push:
+    paths:
+      - '.github/workflows/upgrade-cloud-video.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch cloud video upload and profile linkage
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('app.js')
+          s = p.read_text()
+
+          def replace_once(old, new, label):
+              global s
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              s = s.replace(old, new, 1)
+
+          replace_once(
+          """  function saveState(){
+            try{
+              localStorage.setItem(STORE_KEY, JSON.stringify(state));""",
+          """  function saveState(){
+            try{
+              const persistentState = Object.assign({}, state, {
+                videos:(state.videos || []).filter(v=>!v.cloudBacked)
+              });
+              localStorage.setItem(STORE_KEY, JSON.stringify(persistentState));""",
+          'saveState cloud filter')
+
+          replace_once(
+          """    songs:[],
+            jobs:[],
+            audioUrls:{},""",
+          """    songs:[],
+            jobs:[],
+            videos:[],
+            audioUrls:{},""",
+          'cloud video state')
+
+          replace_once(
+          """      if(cloud.user) await refreshCloudState();
+              cloud.ready = true;
+              updateAuthUI();
+              cloud.client.auth.onAuthStateChange((_event, session)=>{
+                cloud.user = session ? session.user : null;
+                setTimeout(async ()=>{
+                  if(cloud.user) await refreshCloudState();
+                  else resetCloudState();
+                  updateAuthUI();
+                  const route = document.body.getAttribute('data-route');
+                  if(route === 'profile') renderRoute('profile');
+                  if(route === 'ai-artists') renderRoute('ai-artists');
+                },0);
+              });""",
+          """      if(cloud.user) await refreshCloudState();
+              else await refreshPublicVideos();
+              cloud.ready = true;
+              updateAuthUI();
+              if(document.body.getAttribute('data-route') === 'home') renderRoute('home');
+              cloud.client.auth.onAuthStateChange((_event, session)=>{
+                cloud.user = session ? session.user : null;
+                setTimeout(async ()=>{
+                  if(cloud.user) await refreshCloudState();
+                  else { resetCloudState(); await refreshPublicVideos(); }
+                  updateAuthUI();
+                  const route = document.body.getAttribute('data-route');
+                  if(route === 'profile') renderRoute('profile');
+                  if(route === 'ai-artists') renderRoute('ai-artists');
+                  if(route === 'home') renderRoute('home');
+                },0);
+              });""",
+          'cloud init public videos')
+
+          replace_once(
+          """    cloud.songs = [];
+            cloud.jobs = [];
+            cloud.audioUrls = {};""",
+          """    cloud.songs = [];
+            cloud.jobs = [];
+            cloud.videos = [];
+            cloud.audioUrls = {};""",
+          'cloud reset videos')
+
+          helper_marker = "\n\n  function syncLocalProfile(){"
+          if s.count(helper_marker) != 1:
+              raise SystemExit('syncLocalProfile marker not unique')
+          helpers = r'''
+
+  function secondsToClock(value){
+    const total=Math.max(0,Math.round(Number(value)||0));
+    const hours=Math.floor(total/3600);
+    const minutes=Math.floor((total%3600)/60);
+    const seconds=total%60;
+    return hours ? `${hours}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}` : `${minutes}:${String(seconds).padStart(2,'0')}`;
+  }
+
+  function cloudVideoToCard(row){
+    const profile=row.profile || row.profiles || {};
+    const ownProfile=(cloud.user && row.owner_user_id===cloud.user.id && cloud.profile) ? cloud.profile : null;
+    const creatorProfile=profile.username ? profile : (ownProfile || {});
+    const publicData=cloud.client ? cloud.client.storage.from('video-media').getPublicUrl(row.video_path) : {data:null};
+    const publicUrl=publicData && publicData.data ? publicData.data.publicUrl : '';
+    return {
+      id:row.id,
+      title:row.title,
+      description:row.description || '',
+      creatorId:`user:${row.owner_user_id}`,
+      creatorName:creatorProfile.username || 'StreamNest Creator',
+      creatorHandle:creatorProfile.handle || '',
+      category:row.category || 'Other',
+      tags:Array.isArray(row.tags) ? row.tags : [],
+      duration:secondsToClock(row.duration_seconds),
+      durationSeconds:Number(row.duration_seconds)||0,
+      views:Number(row.views)||0,
+      likes:Number(row.likes)||0,
+      dislikes:Number(row.dislikes)||0,
+      uploadDate:new Date(row.published_at || row.created_at || Date.now()).getTime(),
+      thumbnailStyle:{type:'svg',seed:hashText(row.id || row.title)%32},
+      videoSource:publicUrl ? {objectUrl:publicUrl} : null,
+      comments:[],
+      saved:false,
+      liked:false,
+      disliked:false,
+      watchProgress:0,
+      published:row.status==='published',
+      cloudBacked:true,
+      ownerUserId:row.owner_user_id,
+      videoPath:row.video_path
+    };
+  }
+
+  function syncCloudVideosIntoLocalState(){
+    if(cloud.user && cloud.profile){
+      (state.videos || []).filter(v=>!v.cloudBacked && (state.uploads || []).includes(v.id)).forEach(v=>{
+        v.creatorId=`user:${cloud.user.id}`;
+        v.creatorName=cloud.profile.username;
+        v.ownerUserId=cloud.user.id;
+        v.legacyLocalUpload=true;
+      });
+    }
+    const localOnly=(state.videos || []).filter(v=>!v.cloudBacked);
+    const cloudCards=(cloud.videos || []).map(cloudVideoToCard);
+    state.videos=[...cloudCards,...localOnly];
+  }
+
+  async function refreshPublicVideos(){
+    if(!cloud.client) return;
+    const {data,error}=await cloud.client.from('videos')
+      .select('*, profile:profiles!videos_owner_user_id_fkey(username,handle,avatar_color)')
+      .eq('is_public',true)
+      .eq('status','published')
+      .order('created_at',{ascending:false})
+      .limit(100);
+    if(error) throw error;
+    cloud.videos=data || [];
+    syncCloudVideosIntoLocalState();
+  }
+'''
+          s = s.replace(helper_marker, helpers + helper_marker, 1)
+
+          old_refresh = """    const [creatorsRes, agentsRes, songsRes, jobsRes] = await Promise.all([
+              cloud.client.from('creators').select('*').eq('owner_user_id', cloud.user.id).order('created_at',{ascending:false}),
+              cloud.client.from('ai_agents').select('*').eq('owner_user_id', cloud.user.id),
+              cloud.client.from('songs').select('*').eq('owner_user_id', cloud.user.id).order('created_at',{ascending:false}).limit(50),
+              cloud.client.from('generation_jobs').select('*').eq('owner_user_id', cloud.user.id).order('created_at',{ascending:false}).limit(100)
+            ]);
+            if(creatorsRes.error) throw creatorsRes.error;
+            if(agentsRes.error) throw agentsRes.error;
+            if(songsRes.error) throw songsRes.error;
+            if(jobsRes.error) throw jobsRes.error;
+            cloud.creators = creatorsRes.data || [];
+            cloud.agents = Object.fromEntries((agentsRes.data || []).map(a=>[a.creator_id,a]));
+            cloud.songs = songsRes.data || [];
+            cloud.jobs = jobsRes.data || [];
+            syncLocalProfile();"""
+          new_refresh = """    const [creatorsRes, agentsRes, songsRes, jobsRes, videosRes] = await Promise.all([
+              cloud.client.from('creators').select('*').eq('owner_user_id', cloud.user.id).order('created_at',{ascending:false}),
+              cloud.client.from('ai_agents').select('*').eq('owner_user_id', cloud.user.id),
+              cloud.client.from('songs').select('*').eq('owner_user_id', cloud.user.id).order('created_at',{ascending:false}).limit(50),
+              cloud.client.from('generation_jobs').select('*').eq('owner_user_id', cloud.user.id).order('created_at',{ascending:false}).limit(100),
+              cloud.client.from('videos').select('*, profile:profiles!videos_owner_user_id_fkey(username,handle,avatar_color)').order('created_at',{ascending:false}).limit(100)
+            ]);
+            if(creatorsRes.error) throw creatorsRes.error;
+            if(agentsRes.error) throw agentsRes.error;
+            if(songsRes.error) throw songsRes.error;
+            if(jobsRes.error) throw jobsRes.error;
+            if(videosRes.error) throw videosRes.error;
+            cloud.creators = creatorsRes.data || [];
+            cloud.agents = Object.fromEntries((agentsRes.data || []).map(a=>[a.creator_id,a]));
+            cloud.songs = songsRes.data || [];
+            cloud.jobs = jobsRes.data || [];
+            cloud.videos = videosRes.data || [];
+            syncLocalProfile();
+            syncCloudVideosIntoLocalState();"""
+          replace_once(old_refresh, new_refresh, 'refreshCloudState videos')
+
+          upload_pattern = re.compile(r"  // Upload flow\n  function renderUpload\(\)\{.*?\n  \}\n\n  // Channel page", re.S)
+          new_upload = r'''  // Upload flow — signed-in uploads are stored in StreamNest Supabase.
+  function renderUpload(){
+    const c=document.createElement('div'); c.className='screen-page'; c.innerHTML='<h2>Upload Video</h2>';
+    if(!cloud.user){
+      c.innerHTML += `<div class='card'><h3>Sign in to publish</h3><p class='small'>Videos are linked to your StreamNest account so they appear on your profile and work across devices.</p><button class='btn btn-primary' id='upload-signin'>Create account / Sign in</button></div>`;
+      view.appendChild(c);
+      c.querySelector('#upload-signin').addEventListener('click',()=>setRoute('auth'));
+      return;
+    }
+    const form=document.createElement('div'); form.className='form-row';
+    const fileIn=document.createElement('input'); fileIn.type='file'; fileIn.accept='video/mp4,video/webm,video/quicktime,video/x-m4v'; form.appendChild(fileIn);
+    const preview=document.createElement('div'); preview.className='preview-thumb'; preview.textContent='No file selected'; form.appendChild(preview);
+    const fileMeta=document.createElement('div'); fileMeta.className='small'; fileMeta.textContent='Choose an MP4, WebM, MOV or M4V video.'; form.appendChild(fileMeta);
+    const title=document.createElement('input'); title.className='input'; title.placeholder='Video title'; title.maxLength=160; form.appendChild(title);
+    const desc=document.createElement('textarea'); desc.className='input'; desc.placeholder='Description'; form.appendChild(desc);
+    const cat=document.createElement('select'); cat.className='input'; CATEGORIES.filter(x=>x!=='All').forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;cat.appendChild(o);}); form.appendChild(cat);
+    const tags=document.createElement('input'); tags.className='input'; tags.placeholder='Tags (comma separated)'; form.appendChild(tags);
+    const thumbBtn=document.createElement('button'); thumbBtn.className='btn'; thumbBtn.textContent='Generate Thumbnail'; form.appendChild(thumbBtn);
+    const publishBtn=document.createElement('button'); publishBtn.className='btn btn-primary'; publishBtn.textContent='Publish to my profile'; form.appendChild(publishBtn);
+    const uploadStatus=document.createElement('div'); uploadStatus.className='small'; form.appendChild(uploadStatus);
+    c.appendChild(form); view.appendChild(c);
+
+    let fileUrl=null; let fileObj=null; let thumbData=null; let durationSeconds=0;
+    const allowedTypes=['video/mp4','video/webm','video/quicktime','video/x-m4v'];
+    fileIn.addEventListener('change',()=>{
+      const f=fileIn.files[0]; if(!f) return;
+      if(!allowedTypes.includes(f.type)){ alert('Unsupported video type. Use MP4, WebM, MOV or M4V.'); fileIn.value=''; return; }
+      fileObj=f; durationSeconds=0;
+      if(fileUrl) URL.revokeObjectURL(fileUrl);
+      fileUrl=URL.createObjectURL(f);
+      preview.innerHTML='';
+      const v=document.createElement('video'); v.controls=true; v.preload='metadata'; v.src=fileUrl; v.style.maxWidth='100%'; v.style.maxHeight='160px'; preview.appendChild(v);
+      const mb=(f.size/1024/1024).toFixed(1);
+      fileMeta.textContent=`Reading video details… • ${mb} MB`;
+      v.addEventListener('loadedmetadata',()=>{
+        durationSeconds=Number.isFinite(v.duration) ? Math.max(0,Math.round(v.duration)) : 0;
+        fileMeta.textContent=`${secondsToClock(durationSeconds)} • ${mb} MB • ${f.type || 'video'}`;
+      },{once:true});
+    });
+
+    thumbBtn.addEventListener('click',()=>{
+      thumbData=makeThumbSVG(title.value || 'Untitled', hashText(title.value || Date.now())%32, cat.value, {w:640,h:360});
+      preview.innerHTML=`<img src='${thumbData}' style='width:100%;height:160px;object-fit:cover;border-radius:8px'>`;
+    });
+
+    publishBtn.addEventListener('click',async()=>{
+      if(!fileObj){ alert('Please choose a video file to upload.'); return; }
+      if(!title.value.trim()){ alert('Please enter a title.'); return; }
+      if(!cloud.client || !cloud.user){ setRoute('auth'); return; }
+      publishBtn.disabled=true; publishBtn.textContent='Uploading…'; uploadStatus.textContent='Uploading video to StreamNest…';
+      let uploadedPath=null;
+      try{
+        if(!cloud.profile) cloud.profile=await ensureCloudProfile();
+        const mimeExt={'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','video/x-m4v':'m4v'};
+        const rawExt=(fileObj.name.split('.').pop() || '').toLowerCase();
+        const ext=/^[a-z0-9]{2,5}$/.test(rawExt) ? rawExt : (mimeExt[fileObj.type] || 'mp4');
+        const token=(window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        uploadedPath=`${cloud.user.id}/${token}.${ext}`;
+        const {error:uploadError}=await cloud.client.storage.from('video-media').upload(uploadedPath,fileObj,{cacheControl:'3600',upsert:false,contentType:fileObj.type || 'video/mp4'});
+        if(uploadError) throw uploadError;
+        uploadStatus.textContent='Saving video to your profile…';
+        const now=new Date().toISOString();
+        const payload={
+          owner_user_id:cloud.user.id,
+          title:title.value.trim().slice(0,160),
+          description:desc.value.trim(),
+          category:cat.value || 'Other',
+          tags:tags.value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,30),
+          video_path:uploadedPath,
+          duration_seconds:durationSeconds,
+          mime_type:fileObj.type || 'video/mp4',
+          file_size_bytes:fileObj.size,
+          status:'published',
+          is_public:true,
+          published_at:now
+        };
+        const {data:row,error:insertError}=await cloud.client.from('videos')
+          .insert(payload)
+          .select('*, profile:profiles!videos_owner_user_id_fkey(username,handle,avatar_color)')
+          .single();
+        if(insertError){
+          await cloud.client.storage.from('video-media').remove([uploadedPath]);
+          throw insertError;
+        }
+        cloud.videos=[row,...(cloud.videos || []).filter(v=>v.id!==row.id)];
+        syncCloudVideosIntoLocalState();
+        showToast('Video published to your profile');
+        setRoute('watch',{id:row.id});
+      }catch(err){
+        console.error('Video upload failed',err);
+        uploadStatus.textContent=err.message || 'Video upload failed.';
+        showToast('Video upload failed');
+      }finally{
+        publishBtn.disabled=false; publishBtn.textContent='Publish to my profile';
+      }
+    });
+  }
+
+  // Channel page'''
+          s, count = upload_pattern.subn(new_upload, s, count=1)
+          if count != 1:
+              raise SystemExit(f'upload function: expected 1 match, found {count}')
+
+          profile_target = """      host.querySelector('#profile-signout').addEventListener('click',async()=>{await cloud.client.auth.signOut();showToast('Signed out');setRoute('home');});
+              host.querySelector('#edit-cloud-profile').addEventListener('click',async()=>{"""
+          profile_new = """      host.querySelector('#profile-signout').addEventListener('click',async()=>{await cloud.client.auth.signOut();showToast('Signed out');setRoute('home');});
+              const videoSection=document.createElement('section'); videoSection.style.marginTop='20px';
+              const mine=state.videos.filter(v=>v.cloudBacked && v.ownerUserId===cloud.user.id);
+              const legacy=state.videos.filter(v=>!v.cloudBacked && (state.uploads || []).includes(v.id));
+              videoSection.innerHTML=`<div class='song-section-heading'><div><h3>My videos</h3><div class='small'>Videos published from this StreamNest account.</div></div><button class='btn btn-primary' id='profile-upload-video'>Upload video</button></div>`;
+              if(mine.length){
+                const grid=document.createElement('div'); grid.className='grid'; mine.forEach(v=>grid.appendChild(makeCard(v))); videoSection.appendChild(grid);
+              }else{
+                const empty=document.createElement('div'); empty.className='empty-state'; empty.innerHTML='<p>No cloud videos yet. Upload a video and it will appear here with your name and real duration.</p>'; videoSection.appendChild(empty);
+              }
+              if(legacy.length){
+                const warning=document.createElement('div'); warning.className='provider-note'; warning.style.marginTop='12px'; warning.textContent=`${legacy.length} older demo upload${legacy.length===1?' is':'s are'} local-only and cannot be recovered from the old browser uploader. Re-upload ${legacy.length===1?'it':'them'} once to sync the real file and duration.`; videoSection.appendChild(warning);
+              }
+              host.appendChild(videoSection);
+              host.querySelector('#profile-upload-video').addEventListener('click',()=>setRoute('upload'));
+              host.querySelector('#edit-cloud-profile').addEventListener('click',async()=>{"""
+          replace_once(profile_target, profile_new, 'profile video section')
+
+          p.write_text(s)
+          PY
+          node --check app.js
+      - name: Commit cloud video upgrade
+        shell: bash
+        run: |
+          rm .github/workflows/upgrade-cloud-video.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Link video uploads to StreamNest accounts'
+          git push
